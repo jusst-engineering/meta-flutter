@@ -15,6 +15,8 @@ CVE_PRODUCT = "libflutter_engine.so"
 REQUIRED_DISTRO_FEATURES = "opengl"
 
 DEPENDS += "\
+    compiler-rt \
+    libcxx \
     zip-native \
     ${@bb.utils.contains('DISTRO_FEATURES', 'wayland', 'wayland', '', d)} \
     "
@@ -24,7 +26,6 @@ VULKAN_BACKENDS="${@bb.utils.filter('DISTRO_FEATURES', 'wayland x11', d)}"
 PV = "${FLUTTER_SDK_VERSION}"
 
 FLUTTER_ENGINE_PATCHES ?= "\
-    file://0001-clang-toolchain.patch \
     file://0001-disable-pre-canned-sysroot.patch \
     file://0001-remove-x11-dependency.patch \
     file://0001-disable-x11.patch \
@@ -32,6 +33,7 @@ FLUTTER_ENGINE_PATCHES ?= "\
     file://0001-Skip-configuration-dependency-if-unit-tests-are-disa.patch \
     file://0001-gn-riscv32-and-riscv64.patch \
     file://0001-fml-build-config-add-riscv.patch \
+    file://toolchain.gn.in \
     "
 
 SRC_URI = "\
@@ -47,6 +49,11 @@ require conf/include/gn-utils.inc
 require conf/include/clang-utils.inc
 require conf/include/flutter-version.inc
 
+# Toolchain setup
+RUNTIME = "llvm"
+TOOLCHAIN = "clang"
+PREFERRED_PROVIDER_libgcc = "compiler-rt"
+LIBCPLUSPLUS = "-stdlib=libc++"
 
 # For gn.bbclass
 GN_CUSTOM_VARS ?= '\
@@ -107,9 +114,9 @@ PACKAGECONFIG[impeller-opengles] = "--enable-impeller-opengles"
 PACKAGECONFIG[impeller-vulkan] = "--enable-impeller-vulkan"
 PACKAGECONFIG[impeller-3d] = "--enable-impeller-3d"
 
-CLANG_BUILD_ARCH = "${@clang_build_arch(d)}"
-CLANG_TOOLCHAIN_TRIPLE = "${@gn_clang_triple_prefix(d)}"
-CLANG_PATH = "${WORKDIR}/src/buildtools/linux-${CLANG_BUILD_ARCH}/clang"
+# CLANG_BUILD_ARCH = "${@clang_build_arch(d)}"
+# CLANG_TOOLCHAIN_TRIPLE = "${@gn_clang_triple_prefix(d)}"
+# CLANG_PATH = "${WORKDIR}/src/buildtools/linux-${CLANG_BUILD_ARCH}/clang"
 
 GN_ARGS = '\
     ${PACKAGECONFIG_CONFARGS} \
@@ -117,8 +124,8 @@ GN_ARGS = '\
     --target-os linux \
     --linux-cpu ${@gn_target_arch_name(d)} \
     --target-sysroot ${STAGING_DIR_TARGET} \
-    --target-toolchain ${CLANG_PATH} \
-    --target-triple ${@gn_clang_triple_prefix(d)} \
+    --target-toolchain ${STAGING_DIR_NATIVE} \
+    --target-triple ${TARGET_SYS} \
     --no-enable-unittests \
 '
 
@@ -139,6 +146,21 @@ GN_ARGS_LESS_RUNTIME_MODES="${@get_gn_args_less_runtime(d)}"
 FLUTTER_ENGINE_INSTALL_PREFIX ??= "${datadir}/flutter/${FLUTTER_SDK_VERSION}"
 
 do_configure() {
+
+    #
+    # configure toolchain file
+    #
+    cp ${WORKDIR}/toolchain.gn.in ${S}/build/toolchain/custom/BUILD.gn
+    sed -i "s|@CC@|${CC}|g"                           ${S}/build/toolchain/custom/BUILD.gn
+    sed -i "s|@CXX@|${CXX}|g"                         ${S}/build/toolchain/custom/BUILD.gn
+    sed -i "s|@AR@|${TARGET_SYS}-llvm-ar|g"           ${S}/build/toolchain/custom/BUILD.gn
+    sed -i "s|@NM@|${TARGET_SYS}-llvm-nm|g"           ${S}/build/toolchain/custom/BUILD.gn
+    sed -i "s|@READELF@|${TARGET_SYS}-llvm-readelf|g" ${S}/build/toolchain/custom/BUILD.gn
+    sed -i "s|@STRIP@|${TARGET_SYS}-llvm-strip|g"     ${S}/build/toolchain/custom/BUILD.gn
+    sed -i "s|@DEBUG_FLAGS@|${DEBUG_FLAGS}|g"         ${S}/build/toolchain/custom/BUILD.gn
+    sed -i "s|@LD@|${TARGET_SYS}-clang++ -v|g"        ${S}/build/toolchain/custom/BUILD.gn
+
+
     FLUTTER_RUNTIME_MODES="${@bb.utils.filter('PACKAGECONFIG', 'debug profile release jit_release', d)}"
     bbnote "FLUTTER_RUNTIME_MODES=${FLUTTER_RUNTIME_MODES}"
     bbnote "CLANG_BUILD_ARCH=${CLANG_BUILD_ARCH}"
@@ -167,7 +189,8 @@ do_compile() {
     bbnote "FLUTTER_RUNTIME_MODES=${FLUTTER_RUNTIME_MODES}"
 
     for MODE in $FLUTTER_RUNTIME_MODES; do
-        BUILD_DIR="$(echo ${TMP_OUT_DIR} | sed "s/_RUNTIME_/${MODE}/g")"    
+        BUILD_DIR="$(echo ${TMP_OUT_DIR} | sed "s/_RUNTIME_/${MODE}/g")"
+        bbnote `cat ${BUILD_DIR}`
         ninja -C "${BUILD_DIR}" $PARALLEL_MAKE
     done
 }
