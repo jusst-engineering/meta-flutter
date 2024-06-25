@@ -264,7 +264,7 @@ do_configure() {
     done
 
     # external clang toolchain
-    cd ${STAGING_DIR_TARGET}/usr/lib
+    cd ${STAGING_DIR_TARGET}/${libdir}
 
     test -e crtbeginS.o && rm crtbeginS.o
     test -e crtendS.o && rm crtendS.o
@@ -277,6 +277,11 @@ do_configure() {
 do_configure[depends] += "depot-tools-native:do_populate_sysroot"
 
 do_compile() {
+    # required object files for linking
+    CLANG_VERSION=`ls ${CLANG_PATH}/lib/clang`
+    CLANG_LIB_TARGET_PATH=${CLANG_PATH}/lib/clang/${CLANG_VERSION}/lib/${CLANG_TOOLCHAIN_TRIPLE}
+    mkdir -p ${CLANG_LIB_TARGET_PATH}
+    cp ${STAGING_LIBDIR}/*crt*.o ${CLANG_LIB_TARGET_PATH}/
 
     cd ${S}/engine/src
 
