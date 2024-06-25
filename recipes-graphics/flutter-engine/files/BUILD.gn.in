@@ -22,7 +22,7 @@ toolchain("custom") {
   target_triple_flags = "--target=${custom_target_triple}"
   sysroot_flags = "--sysroot ${custom_sysroot}"
 
-  custom_lib_flags = "-L${custom_toolchain}/lib"
+  custom_lib_flags = "-L${custom_toolchain}/lib -L${custom_sysroot}/usr/lib64"
 
   # These library switches can apply to all tools below.
   lib_switch = "-l"

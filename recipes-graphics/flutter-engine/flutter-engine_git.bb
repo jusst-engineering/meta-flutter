@@ -180,6 +180,11 @@ do_configure() {
 do_configure[depends] += "depot-tools-native:do_populate_sysroot"
 
 do_compile() {
+    # required object files for linking
+    CLANG_VERSION=`ls ${CLANG_PATH}/lib/clang`
+    CLANG_LIB_TARGET_PATH=${CLANG_PATH}/lib/clang/${CLANG_VERSION}/lib/${CLANG_TOOLCHAIN_TRIPLE}
+    mkdir -p ${CLANG_LIB_TARGET_PATH}
+    cp ${STAGING_LIBDIR}/*crt*.o ${CLANG_LIB_TARGET_PATH}/
 
     FLUTTER_RUNTIME_MODES="${@bb.utils.filter('PACKAGECONFIG', 'debug profile release jit_release', d)}"
     bbnote "FLUTTER_RUNTIME_MODES=${FLUTTER_RUNTIME_MODES}"
