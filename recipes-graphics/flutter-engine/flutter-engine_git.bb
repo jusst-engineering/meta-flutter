@@ -199,7 +199,7 @@ do_install() {
         install -D -m 0644 ${S}/${BUILD_DIR}/so.unstripped/libflutter_engine.so \
             ${D}${FLUTTER_ENGINE_INSTALL_PREFIX}/${MODE}/lib/libflutter_engine.so
 
-        case "$FLUTTER_ENGINE_STRIP" in
+        case "${FLUTTER_ENGINE_STRIP}" in
         *$MODE*)
             ${STRIP} ${D}${FLUTTER_ENGINE_INSTALL_PREFIX}/$MODE/lib/libflutter_engine.so
             ;;
