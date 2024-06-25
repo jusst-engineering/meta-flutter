@@ -14,13 +14,12 @@ DEPENDS += "\
     flutter-engine \
     libinput \
     libxkbcommon \
-    systemd \
     virtual/egl \
     "
 
 RDEPENDS:${PN} += "xkeyboard-config"
 
-REQUIRED_DISTRO_FEATURES += "opengl systemd"
+REQUIRED_DISTRO_FEATURES += "opengl"
 
 SRC_REPO ??= "github.com/sony/flutter-embedded-linux.git"
 SRC_REPO_BRANCH ??= "master"
