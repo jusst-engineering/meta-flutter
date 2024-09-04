@@ -17,7 +17,7 @@ PUB_CACHE_EXTRA_ARCHIVE_PATH ??= ""
 
 APP_AOT_EXTRA ??= ""
 APP_AOT_ENTRY_FILE ??= "main.dart"
-APP_GEN_SNAPSHOT_FLAGS ??= "--obfuscate"
+APP_GEN_SNAPSHOT_FLAGS ??= ""
 
 FLUTTER_APP_RUNTIME_MODES ?= "release"
 
@@ -30,7 +30,6 @@ _REV = "${@d.getVar('SRCPV') or d.getVar('PV')}"
 PUB_CACHE_ARCHIVE = "flutter-pub-cache-${PN}-${_REV}-${FLUTTER_SDK_TAG}.tar.bz2"
 
 PUBSPEC_IGNORE_LOCKFILE ??= "0"
-PUBSPEC_ENFORCE_LOCKFILE ??= "0"
 
 FLUTTER_SDK = "${STAGING_DIR_NATIVE}/usr/share/flutter/sdk"
 
@@ -74,6 +73,7 @@ def run_command(d, cmd, cwd, env):
 addtask archive_pub_cache before restore_pub_cache after do_patch
 do_archive_pub_cache[network] = "1"
 do_archive_pub_cache[dirs] = "${WORKDIR} ${DL_DIR}"
+do_archive_pub_cache[lockfiles] += "${DL_DIR}/${PUB_CACHE_ARCHIVE}.lock"
 do_archive_pub_cache[depends] += " \
     flutter-sdk-native:do_populate_sysroot \
     pbzip2-native:do_populate_sysroot \
@@ -101,21 +101,46 @@ python do_archive_pub_cache() {
     env['PUB_CACHE'] = pub_cache
 
     shutil.rmtree(f'{pub_cache}', ignore_errors=True)
-    flutter_sdk_pub_cache = os.path.join(d.getVar("STAGING_DATADIR_NATIVE"), 'flutter/sdk/.pub-cache')
+
+    flutter_sdk = os.path.join(d.getVar("STAGING_DATADIR_NATIVE"), 'flutter/sdk')
+    flutter_sdk_pub_cache = os.path.join(flutter_sdk, '.pub-cache')
+
     shutil.copytree(flutter_sdk_pub_cache, pub_cache)
 
     workdir = d.getVar("WORKDIR")
-    env['XDG_CONFIG_HOME'] = workdir
 
-    flutter_sdk = os.path.join(d.getVar("STAGING_DATADIR_NATIVE"), 'flutter/sdk')
+    # required for dart: https://github.com/dart-lang/sdk/issues/41560
+    env['HOME'] = f'{workdir}'
+
+    # required for flutter: https://github.com/flutter/flutter/issues/59430
+    env['XDG_CONFIG_HOME'] = f'{workdir}'
+
+    http_proxy = d.getVar('http_proxy')
+    if http_proxy != None:
+        env['http_proxy']     = f'{http_proxy}'
+
+    https_proxy = d.getVar('https_proxy')
+    if https_proxy != None:
+        env['https_proxy']    = f'{https_proxy}'
+
+    http_proxy_ = d.getVar('HTTP_PROXY')
+    if http_proxy_ != None:
+        env['HTTP_PROXY']     = f'{http_proxy_}'
+
+    https_proxy_ = d.getVar('HTTPS_PROXY')
+    if https_proxy_ != None:
+        env['HTTPS_PROXY']    = f'{https_proxy_}'
+
+    env['NO_PROXY']       = 'localhost,127.0.0.1,::1'
+
     env['PATH'] = f'{env["PATH"]}:{flutter_sdk}/bin'
 
     app_root = os.path.join(d.getVar("S"), d.getVar("FLUTTER_APPLICATION_PATH"))
 
+    #
+    # Remove pubspec.lock file if present
+    #
     if d.getVar("PUBSPEC_IGNORE_LOCKFILE") == "1":
-        #
-        # Remove pubspec.lock file if present
-        #
         pubspec_lock = os.path.join(app_root, 'pubspec.lock')
         if os.path.exists(pubspec_lock):
             run_command(d, 'rm -rf pubspec.lock', app_root, env)
@@ -143,18 +168,16 @@ python do_archive_pub_cache() {
     run_command(d, 'flutter config --no-analytics', app_root, env)
     run_command(d, 'flutter config --no-cli-animations', app_root, env)
     run_command(d, 'flutter clean', app_root, env)
-    if d.getVar("PUBSPEC_ENFORCE_LOCKFILE") == "1":
-        run_command(d, 'flutter pub get --enforce-lockfile', app_root, env)
-        run_command(d, 'flutter pub get --offline --enforce-lockfile', app_root, env)
-    else:
-        run_command(d, 'flutter pub get', app_root, env)
-        run_command(d, 'flutter pub get --offline', app_root, env)
 
-    cp_cmd = \
-        'mkdir -p %s/.project | true; ' \
-        'cp -r .* %s/.project/ | true; ' \
-        % (pub_cache, pub_cache)
+    # if no pubspec.lock, create it
+    pubspec_lock = os.path.join(app_root, 'pubspec.lock')
+    if not os.path.exists(pubspec_lock):
+        run_command(d, 'flutter pub get -v', app_root, env)
 
+    run_command(d, 'flutter pub get --enforce-lockfile', app_root, env)
+    run_command(d, 'flutter pub get --enforce-lockfile --offline', app_root, env)
+
+    cp_cmd = f'mkdir -p {pub_cache}/.project | true; cp -r .* {pub_cache}/.project/ | true;'
     bb.note("Running [%s] in %s" % (cp_cmd, app_root))
     run_command(d, cp_cmd, app_root, env)
 
@@ -178,6 +201,7 @@ python do_archive_pub_cache() {
 
 addtask restore_pub_cache before do_configure after do_archive_pub_cache
 do_restore_pub_cache[dirs] = "${WORKDIR} ${DL_DIR}"
+do_restore_pub_cache[lockfiles] += "${DL_DIR}/${PUB_CACHE_ARCHIVE}.lock"
 do_restore_pub_cache[depends] += " \
     pbzip2-native:do_populate_sysroot \
     tar-native:do_populate_sysroot \
@@ -209,14 +233,14 @@ python do_restore_pub_cache() {
     # restore flutter pub get artifacts
     app_root = os.path.join(d.getVar("S"), d.getVar("FLUTTER_APPLICATION_PATH"))
     cmd = \
-        'mv .project/.dart_tool %s/ | true; ' \
-        'mv .project/.packages %s/ | true; ' \
-        'mv .project/.dart_tool %s/ | true; ' \
-        'mv .project/.flutter-plugins %s/ | true; ' \
-        'mv .project/.flutter-plugins-dependencies %s/ | true; ' \
-        'mv .project/.metadata %s/ | true; ' \
-        'mv .project/.packages %s/ | true; ' \
-        'rm -rf .project' % (app_root, app_root, app_root, app_root, app_root, app_root, app_root)
+        f'mv .project/.dart_tool {app_root}/ | true; ' \
+        f'mv .project/.packages {app_root}/ | true; ' \
+        f'mv .project/.dart_tool {app_root}/ | true; ' \
+        f'mv .project/.flutter-plugins {app_root}/ | true; ' \
+        f'mv .project/.flutter-plugins-dependencies {app_root}/ | true; ' \
+        f'mv .project/.metadata {app_root}/ | true; ' \
+        f'mv .project/.packages {app_root}/ | true; ' \
+        'rm -rf .project'
     bb.note("Running [%s] in %s" % (cmd, unpackdir))
     ret = subprocess.call(cmd, preexec_fn=subprocess_setup, shell=True, cwd=unpackdir)
 
@@ -250,9 +274,6 @@ python do_compile() {
     if pubspec_appname != pubspec_yaml_appname:
         bb.fatal("Set PUBSPEC_APPNAME to match name value in pubspec.yaml")
 
-    if d.getVar("PUBSPEC_IGNORE_LOCKFILE") == "1" and d.getVar("PUBSPEC_ENFORCE_LOCKFILE") == "1":
-        bb.fatal("Both PUBSPEC_IGNORE_LOCKFILE and PUBSPEC_ENFORCE_LOCKFILE are set which is invalid")
-
     flutter_sdk = d.getVar('FLUTTER_SDK')
 
     env = os.environ
@@ -262,6 +283,10 @@ python do_compile() {
     staging_dir_target = d.getVar('STAGING_DIR_TARGET')
     env['PKG_CONFIG_PATH'] = f'{staging_dir_target}/usr/lib/pkgconfig:{staging_dir_target}/usr/share/pkgconfig:{d.getVar("PKG_CONFIG_PATH")}'
 
+    workdir = d.getVar("WORKDIR")
+    # required for flutter: https://github.com/flutter/flutter/issues/59430
+    env['XDG_CONFIG_HOME'] = f'{workdir}'
+
     bb.note(f'{env}')
 
     source_dir = d.getVar('S')
@@ -270,6 +295,10 @@ python do_compile() {
     cmd = d.getVar('FLUTTER_PREBUILD_CMD')
     if cmd != '':
         run_command(d, cmd, source_root, env)
+
+    run_command(d, 'flutter config --no-analytics', source_root, env)
+    run_command(d, 'flutter config --no-cli-animations', source_root, env)
+    run_command(d, 'flutter pub get --enforce-lockfile --offline -v', source_root, env)
 
     build_type = d.getVar('BUILD_TYPE')
 
@@ -287,21 +316,16 @@ def build_web(d, source_root, env):
     if os.path.exists(build_folder):
         run_command(d, 'flutter clean', source_root, env)
 
-    if d.getVar("PUBSPEC_IGNORE_LOCKFILE") == "1":
-        #
-        # Remove pubspec.lock file if present
-        #
-        pubspec_lock = os.path.join(app_root, 'pubspec.lock')
-        if os.path.exists(pubspec_lock):
-            run_command(d, 'rm -rf pubspec.lock', app_root, env)
-
     flutter_build_args = d.getVar('FLUTTER_BUILD_ARGS')
     run_command(d, f'flutter build web {flutter_build_args}', source_root, env)
 
     bb.note(f'Flutter build web {flutter_build_args}: Completed')
 
+def versiontuple(v):
+    return tuple(map(int, (v.split("."))))
 
 def build_app(d, source_dir, flutter_sdk, pubspec_appname, flutter_application_path, staging_dir_target, source_root, env):
+    import glob
     import shutil
 
     # determine build type based on what flutter-engine installed.
@@ -311,6 +335,11 @@ def build_app(d, source_dir, flutter_sdk, pubspec_appname, flutter_application_p
 
     flutter_app_runtime_modes = d.getVar('FLUTTER_APP_RUNTIME_MODES')
     flutter_build_args = d.getVar('FLUTTER_BUILD_ARGS')
+
+    new_build_scheme = False
+    if versiontuple(flutter_sdk_version) >= versiontuple('3.24.0'):
+        bb.note(f'Using new build scheme')
+        new_build_scheme = True
 
     for runtime_mode in flutter_runtime_modes:
         if runtime_mode not in flutter_app_runtime_modes:
@@ -323,20 +352,6 @@ def build_app(d, source_dir, flutter_sdk, pubspec_appname, flutter_application_p
         if os.path.exists(build_folder):
             run_command(d, 'flutter clean -v', source_root, env)
 
-        if d.getVar("PUBSPEC_IGNORE_LOCKFILE") == "1":
-            #
-            # Remove pubspec.lock file if present
-            #
-            pubspec_lock = os.path.join(app_root, 'pubspec.lock')
-            if os.path.exists(pubspec_lock):
-                run_command(d, 'rm -rf pubspec.lock', app_root, env)
-
-        run_command(d, 'flutter config --no-cli-animations', source_root, env)
-        if d.getVar("PUBSPEC_ENFORCE_LOCKFILE") == "1":
-            run_command(d, 'flutter pub get --offline --enforce-lockfile -v', source_root, env)
-        else:
-            run_command(d, 'flutter pub get --offline -v', source_root, env)
-        
         if runtime_mode == 'jit_release':
             cmd = (f'flutter build {flutter_build_args} --local-engine -v')
             run_command(cmd, source_root, env)
@@ -363,10 +378,11 @@ def build_app(d, source_dir, flutter_sdk, pubspec_appname, flutter_application_p
                 flutter_app_vm_profile = 'true'
 
             flutter_app_debug_flags = ''
-            flutter_app_app_dill = '--output-dill .dart_tool/flutter_build/*/app.dill'
+            dill_path = glob.glob(f'{source_dir}/{flutter_application_path}/.dart_tool/flutter_build/*/app.dill')
+            bb.note(f'{dill_path}')
+            flutter_app_output_dill = dill_path[0]
             if runtime_mode == 'debug':
                 flutter_app_debug_flags = '--enable-asserts'
-                flutter_app_app_dill = '.dart_tool/flutter_build/*/app.dill'
 
             flutter_source_file = ''
             flutter_source_package = ''
@@ -378,18 +394,30 @@ def build_app(d, source_dir, flutter_sdk, pubspec_appname, flutter_application_p
                 flutter_source_defines = f'-Dflutter.dart_plugin_registrant=file://{dart_plugin_registrant_file}'
 
             flutter_native_assets = ''
-            if os.path.isfile('.dart_tool/flutter_build/*/native_assets.yaml'):
-                flutter_native_assets = f'--native-assets {source_dir}/{flutter_application_path}/.dart_tool/flutter_build/*/native_assets.yaml'
+            yaml_path = glob.glob(f'{source_dir}/{flutter_application_path}/.dart_tool/flutter_build/*/native_assets.yaml')
+            if os.path.isfile(yaml_path[0]):
+                flutter_native_assets = f'--native-assets {yaml_path[0]}'
 
             app_aot_extra = d.getVar("APP_AOT_EXTRA")
             app_aot_entry_file = d.getVar("APP_AOT_ENTRY_FILE")
 
-            cmd = f'{flutter_sdk}/bin/cache/dart-sdk/bin/dart \
+            package_config_json = f'{source_dir}/{flutter_application_path}/.dart_tool/package_config.json'
+
+            if not new_build_scheme:
+                dart_runtime = f'{flutter_sdk}/bin/cache/dart-sdk/bin/dart'
+                frontend_snapshot = f'{flutter_sdk}/bin/cache/artifacts/engine/linux-{clang_build_arch(d)}/frontend_server.dart.snapshot'
+                dep_path = glob.glob(f'{source_dir}/{flutter_application_path}/.dart_tool/flutter_build/*/kernel_snapshot.d')
+            else:
+                dart_runtime = f'{flutter_sdk}/bin/cache/dart-sdk/bin/dartaotruntime'
+                frontend_snapshot = f'{flutter_sdk}/bin/cache/artifacts/engine/linux-{clang_build_arch(d)}/frontend_server_aot.dart.snapshot'
+                dep_path = glob.glob(f'{source_dir}/{flutter_application_path}/.dart_tool/flutter_build/*/kernel_snapshot_program.d')
+
+            cmd = f'{dart_runtime} \
                 --disable-analytics \
-                --disable-dart-dev {flutter_sdk}/bin/cache/artifacts/engine/linux-{clang_build_arch(d)}/frontend_server.dart.snapshot \
+                --disable-dart-dev \
+                {frontend_snapshot} \
                 --sdk-root {flutter_app_sdk_root} \
                 --target=flutter \
-                --no-print-incremental-dependencies \
                 -Ddart.vm.profile={flutter_app_vm_profile} \
                 -Ddart.vm.product={flutter_app_vm_product} \
                 {app_aot_extra} \
@@ -398,9 +426,9 @@ def build_app(d, source_dir, flutter_sdk, pubspec_appname, flutter_application_p
                 --aot \
                 --tfa \
                 --target-os linux \
-                --packages .dart_tool/package_config.json \
-                {flutter_app_app_dill} \
-                --depfile .dart_tool/flutter_build/*/kernel_snapshot.d \
+                --packages {package_config_json} \
+                --output-dill {flutter_app_output_dill} \
+                --depfile {dep_path[0]} \
                 {flutter_source_file} \
                 {flutter_source_package} \
                 {flutter_source_defines} \
@@ -443,5 +471,5 @@ def build_app(d, source_dir, flutter_sdk, pubspec_appname, flutter_application_p
                 --elf=libapp.so \
                 --strip \
                 {app_gen_snapshot_flags} \
-                .dart_tool/flutter_build/*/app.dill'
+                {flutter_app_output_dill}'
             run_command(d, cmd, source_root, env)
