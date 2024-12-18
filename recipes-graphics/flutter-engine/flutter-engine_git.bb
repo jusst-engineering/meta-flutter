@@ -31,6 +31,7 @@ FLUTTER_ENGINE_PATCHES ?= "\
 
 SRC_URI = "\
     gn://github.com/flutter/engine.git;gn_name=src/flutter \
+    file://BUILD.gn.in \
     ${FLUTTER_ENGINE_PATCHES} \
     "
 

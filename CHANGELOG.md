@@ -1,5 +1,8 @@
 # Changelog
 
+Dec 17, 2024
+3. Flutter SDK 3.27.1
+
 Sep 8, 2024
 1. Flutter SDK 3.24.2
 2. dart SDK 3.5.2
