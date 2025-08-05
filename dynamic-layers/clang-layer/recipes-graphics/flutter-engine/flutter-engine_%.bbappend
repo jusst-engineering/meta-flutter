@@ -21,7 +21,7 @@ COMPATIBLE_MACHINE:riscv64 = "(.*)"
 CLANG_PATH:riscv64 = "${STAGING_DIR_NATIVE}/usr"
 
 do_configure:append() {
-    cd ${STAGING_DIR_TARGET}/usr/lib
+    cd ${STAGING_DIR_TARGET}/${libdir}
 
     test -e crtbeginS.o && rm crtbeginS.o
     test -e crtendS.o && rm crtendS.o
